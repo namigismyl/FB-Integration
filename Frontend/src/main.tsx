@@ -1,6 +1,12 @@
-import { createRoot } from 'react-dom/client'
-import App from './App.tsx'
+import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App'
+import { SpeedInsights } from "@vercel/speed-insights/react"
+import "./i18n";
 
-createRoot(document.getElementById('root')!).render(
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
     <App />
+    <SpeedInsights />
+  </React.StrictMode>,
 )

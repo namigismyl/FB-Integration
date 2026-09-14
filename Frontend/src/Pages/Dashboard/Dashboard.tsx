@@ -1,0 +1,434 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
+import {
+  Briefcase,
+  UserSquare2,
+  ClipboardList,
+  Star,
+  ClipboardCheck,
+  Gauge,
+  Store,
+  AlertTriangle,
+  ArrowUpRight,
+  PackageOpen,
+} from "lucide-react";
+import { ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+import PageHeader from "../../Components/PageHeader";
+import EmptyState from "../../Components/EmptyState";
+import { useAuth } from "../../Context/useAuth";
+import { canAccessSection } from "../../Utils/permissions";
+import { getJobs } from "../../Services/jobsService";
+import { getCandidates } from "../../Services/candidatesService";
+import { getApplications } from "../../Services/applicationsService";
+import { getAuditAnalytics, type AuditAnalytics } from "../../Services/analyticsService";
+import type { Job, Candidate, Application, CandidateStatus } from "../../Types/recruitment";
+
+const STATUS_COLORS: Partial<Record<CandidateStatus, string>> = {
+  applied: "#0ea5e9",
+  interview: "#8b5cf6",
+  offer: "#14b8a6",
+
+  new: "#0ea5e9",
+  screening: "#d97706",
+  shortlisted: "#6366f1",
+  rejected: "#ef4444",
+  hired: "#16a34a",
+};
+
+const Dashboard: React.FC = () => {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const navigate = useNavigate();
+
+  const showRecruitment = user ? canAccessSection(user, "recruitment") : false;
+  const showAudit = user ? canAccessSection(user, "audit") : false;
+
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [analytics, setAnalytics] = useState<AuditAnalytics | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [recruitmentError, setRecruitmentError] = useState<string | null>(null);
+  const [auditError, setAuditError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadDashboard = async () => {
+      setLoading(true);
+      setRecruitmentError(null);
+      setAuditError(null);
+
+      const tasks: Promise<void>[] = [];
+
+      if (showRecruitment) {
+        tasks.push(
+          Promise.all([
+            getJobs(),
+            getCandidates(),
+            getApplications(),
+          ])
+            .then(([jobsResult, candidatesResult, applicationsResult]) => {
+              if (!mounted) return;
+
+              setJobs(jobsResult);
+              setCandidates(candidatesResult);
+              setApplications(applicationsResult);
+            })
+            .catch((error) => {
+              console.error("Recruitment dashboard load error:", error);
+
+              if (!mounted) return;
+
+              setRecruitmentError(
+                error?.response?.data?.message ||
+                  t("dashboard.recruitmentLoadError")
+              );
+            })
+        );
+      }
+
+      if (showAudit) {
+        tasks.push(
+          getAuditAnalytics()
+            .then((result) => {
+              if (!mounted) return;
+              setAnalytics(result);
+            })
+            .catch((error) => {
+              console.error("Audit dashboard load error:", error);
+
+              if (!mounted) return;
+
+              setAuditError(
+                error?.response?.data?.message ||
+                  t("dashboard.auditLoadError")
+              );
+            })
+        );
+      }
+
+      try {
+        await Promise.all(tasks);
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void loadDashboard();
+
+    return () => {
+      mounted = false;
+    };
+  }, [showRecruitment, showAudit, t]);
+
+  const statusBreakdown = useMemo(() => {
+    const counts: Record<string, number> = {};
+    candidates.forEach((c) => {
+      counts[c.status] = (counts[c.status] ?? 0) + 1;
+    });
+    return Object.entries(counts).map(([status, value]) => ({ status, value }));
+  }, [candidates]);
+
+  const recentCandidates = useMemo(
+    () =>
+      [...candidates]
+        .sort(
+          (a, b) =>
+            new Date(b.createdAt || 0).getTime() -
+            new Date(a.createdAt || 0).getTime()
+        )
+        .slice(0, 5),
+    [candidates],
+  );
+
+  if (!user) return null;
+
+  return (
+    <div>
+      <PageHeader title={t("dashboard.welcome", { name: user.name.split(" ")[0] })} subtitle={t("dashboard.subtitle")} />
+
+      {loading ? (
+        <div className="empty-state">{t("dashboard.loading")}</div>
+      ) : (
+        <>
+          {showRecruitment && (
+            <>
+              <h3 className="dashboard-section-title">{t("dashboard.recruitment")}</h3>
+
+              {recruitmentError && (
+                <div className="dashboard-error">
+                  <AlertTriangle size={18} />
+                  <div>
+                    <strong>{t("dashboard.recruitmentLoadErrorTitle")}</strong>
+                    <p>{recruitmentError}</p>
+                  </div>
+                </div>
+              )}
+              <div className="kpi-grid">
+                <div className="kpi-card anim-in">
+                  <div className="kpi-card__icon" style={{ background: "rgba(99,102,241,0.12)" }}>
+                    <Briefcase size={18} color="#6366f1" />
+                  </div>
+                  <p className="kpi-card__label">{t("dashboard.totalJobs")}</p>
+                  <p className="kpi-card__value">{jobs.length}</p>
+                </div>
+                <div className="kpi-card anim-in" style={{ animationDelay: "0.05s" }}>
+                  <div className="kpi-card__icon" style={{ background: "rgba(14,165,233,0.12)" }}>
+                    <UserSquare2 size={18} color="#0ea5e9" />
+                  </div>
+                  <p className="kpi-card__label">{t("dashboard.totalCandidates")}</p>
+                  <p className="kpi-card__value">{candidates.length}</p>
+                </div>
+                <div className="kpi-card anim-in" style={{ animationDelay: "0.1s" }}>
+                  <div className="kpi-card__icon" style={{ background: "rgba(34,197,94,0.12)" }}>
+                    <ClipboardList size={18} color="#22c55e" />
+                  </div>
+                  <p className="kpi-card__label">{t("dashboard.applications")}</p>
+                  <p className="kpi-card__value">{applications.length}</p>
+                </div>
+                <div className="kpi-card anim-in" style={{ animationDelay: "0.15s" }}>
+                  <div className="kpi-card__icon" style={{ background: "rgba(245,158,11,0.12)" }}>
+                    <Star size={18} color="#f59e0b" />
+                  </div>
+                  <p className="kpi-card__label">{t("dashboard.shortlisted")}</p>
+                  <p className="kpi-card__value">
+                    {candidates.filter((c) => c.status === "shortlisted").length}
+                  </p>
+                </div>
+              </div>
+
+              <div className="charts-grid">
+                <div className="recent-card anim-in">
+                  <div className="chart-card__header">
+                    <h3>{t("dashboard.recentCandidates")}</h3>
+                    <button className="recent-card__link" onClick={() => navigate("/app/recruitment/candidates")}>
+                      {t("dashboard.viewAll")} <ArrowUpRight size={13} />
+                    </button>
+                  </div>
+                  {recentCandidates.length === 0 ? (
+                    <div className="chart-empty">
+                      <PackageOpen size={22} />
+                      <p>{t("dashboard.noCandidates")}</p>
+                    </div>
+                  ) : (
+                    <div className="recent-list">
+                      {recentCandidates.map((c) => (
+                        <div
+                          className="recent-row"
+                          key={c.id}
+                          style={{ cursor: "pointer" }}
+                          onClick={() => navigate(`/app/recruitment/candidates/${c.id}`)}
+                        >
+                          <div className="recent-row__info">
+                            <p className="recent-row__title">{c.name}</p>
+                            <p className="recent-row__desc">{c.skills.slice(0, 3).join(", ") || "—"}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="chart-card anim-in" style={{ animationDelay: "0.06s" }}>
+                  <div className="chart-card__header">
+                    <h3>{t("dashboard.candidatesByStatus")}</h3>
+                  </div>
+                  {statusBreakdown.length === 0 ? (
+                    <div className="chart-empty">
+                      <UserSquare2 size={22} />
+                      <p>{t("dashboard.addCandidates")}</p>
+                    </div>
+                  ) : (
+                    <div className="donut-wrap">
+                      <ResponsiveContainer width="100%" height={180}>
+                        <PieChart>
+                          <Pie
+                            data={statusBreakdown}
+                            dataKey="value"
+                            innerRadius={55}
+                            outerRadius={75}
+                            paddingAngle={2}
+                            animationDuration={900}
+                          >
+                            {statusBreakdown.map((entry) => (
+                              <Cell
+                                key={entry.status}
+                                fill={STATUS_COLORS[entry.status as CandidateStatus]}
+                                stroke="none"
+                              />
+                            ))}
+                          </Pie>
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div className="donut-center">
+                        <span className="donut-center__value">{candidates.length}</span>
+                        <span className="donut-center__label">{candidates.length === 1 ? t("dashboard.candidate") : t("dashboard.candidates")}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+
+          {showAudit && (
+            <>
+              <h3 className="dashboard-section-title">{t("dashboard.auditOperations")}</h3>
+
+              {auditError && (
+                <div className="dashboard-error">
+                  <AlertTriangle size={18} />
+                  <div>
+                    <strong>{t("dashboard.auditLoadErrorTitle")}</strong>
+                    <p>{auditError}</p>
+                  </div>
+                </div>
+              )}
+
+              {analytics && (
+
+                <>
+
+                  <div className="kpi-grid">
+
+                    <div className="kpi-card anim-in">
+
+                      <div className="kpi-card__icon" style={{ background: "rgba(99,102,241,0.12)" }}>
+
+                        <Gauge size={18} color="#6366f1" />
+
+                      </div>
+
+                      <p className="kpi-card__label">{t("dashboard.overallScore")}</p>
+
+                      <p className="kpi-card__value">{analytics.overallScore.toFixed(1)} / 10</p>
+
+                    </div>
+
+
+                    <div className="kpi-card anim-in" style={{ animationDelay: "0.05s" }}>
+
+                      <div className="kpi-card__icon" style={{ background: "rgba(14,165,233,0.12)" }}>
+
+                        <ClipboardCheck size={18} color="#0ea5e9" />
+
+                      </div>
+
+                      <p className="kpi-card__label">{t("dashboard.totalAudits")}</p>
+
+                      <p className="kpi-card__value">{analytics.totalAudits}</p>
+
+                    </div>
+
+
+                    <div className="kpi-card anim-in" style={{ animationDelay: "0.1s" }}>
+
+                      <div className="kpi-card__icon" style={{ background: "rgba(34,197,94,0.12)" }}>
+
+                        <Store size={18} color="#22c55e" />
+
+                      </div>
+
+                      <p className="kpi-card__label">{t("dashboard.restaurantsAudited")}</p>
+
+                      <p className="kpi-card__value">{analytics.restaurantsAudited}</p>
+
+                    </div>
+
+
+                    <div className="kpi-card anim-in" style={{ animationDelay: "0.15s" }}>
+
+                      <div className="kpi-card__icon" style={{ background: "rgba(245,158,11,0.12)" }}>
+
+                        <AlertTriangle size={18} color="#f59e0b" />
+
+                      </div>
+
+                      <p className="kpi-card__label">{t("dashboard.criticalLowScores")}</p>
+
+                      <p className="kpi-card__value">{analytics.criticalCount}</p>
+
+                    </div>
+
+                  </div>
+
+
+                  <div className="recent-card anim-in">
+
+                    <div className="chart-card__header">
+
+                      <h3>{t("dashboard.restaurantComparison")}</h3>
+
+                      <button
+
+                        className="recent-card__link"
+
+                        onClick={() => navigate("/app/audit/analytics")}
+
+                      >
+
+                        {t("dashboard.fullAnalytics")} <ArrowUpRight size={13} />
+
+                      </button>
+
+                    </div>
+
+
+                    {analytics.restaurantComparison.length === 0 ? (
+
+                      <EmptyState
+
+                        icon={<Store size={26} />}
+
+                        title={t("dashboard.noAudits")}
+
+                        hint={t("dashboard.submitAudit")}
+
+                      />
+
+                    ) : (
+
+                      <div className="recent-list">
+
+                        {analytics.restaurantComparison.map((r) => (
+
+                          <div className="recent-row" key={r.restaurantId}>
+
+                            <div className="recent-row__info">
+
+                              <p className="recent-row__title">{r.name}</p>
+
+                            </div>
+
+                            <span className="recent-row__time">
+
+                              {r.score.toFixed(1)} / 10
+
+                            </span>
+
+                          </div>
+
+                        ))}
+
+                      </div>
+
+                    )}
+
+                  </div>
+
+                </>
+
+              )}
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
+export default Dashboard;

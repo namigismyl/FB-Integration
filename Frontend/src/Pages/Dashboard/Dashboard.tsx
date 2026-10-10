@@ -1,0 +1,549 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
+import {
+  Briefcase,
+  UserSquare2,
+  ClipboardList,
+  Star,
+  ClipboardCheck,
+  Gauge,
+  Store,
+  AlertTriangle,
+  ArrowUpRight,
+  PackageOpen,
+} from "lucide-react";
+import { ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+import PageHeader from "../../Components/PageHeader";
+import EmptyState from "../../Components/EmptyState";
+import { useAuth } from "../../Context/useAuth";
+import { canAccessSection } from "../../Utils/permissions";
+import { getJobs } from "../../Services/jobsService";
+import { getCandidates } from "../../Services/candidatesService";
+import { getApplications } from "../../Services/applicationsService";
+import { getAuditAnalytics, type AuditAnalytics } from "../../Services/analyticsService";
+import type { Job, Candidate, Application, CandidateStatus } from "../../Types/recruitment";
+import { ACCENT } from "../../Utils/theme";
+
+const STATUS_COLORS: Partial<Record<CandidateStatus, string>> = {
+  applied: "#0ea5e9",
+  interview: "#8b5cf6",
+  offer: "#14b8a6",
+
+  new: "#0ea5e9",
+  screening: "#d97706",
+  shortlisted: "#6366f1",
+  rejected: "#ef4444",
+  hired: "#16a34a",
+};
+
+const KPI_ICON_STYLES = {
+  accent: {
+    background: "rgba(99,102,241,0.12)",
+    color: ACCENT,
+  },
+  info: {
+    background: "rgba(14,165,233,0.12)",
+    color: "#0ea5e9",
+  },
+  success: {
+    background: "rgba(34,197,94,0.12)",
+    color: "#22c55e",
+  },
+  warning: {
+    background: "rgba(245,158,11,0.12)",
+    color: "#f59e0b",
+  },
+} as const;
+
+const Dashboard: React.FC = () => {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const navigate = useNavigate();
+
+  const showRecruitment = user ? canAccessSection(user, "recruitment") : false;
+  const showAudit = user ? canAccessSection(user, "audit") : false;
+
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [analytics, setAnalytics] = useState<AuditAnalytics | null>(null);
+  const [jobsLoading, setJobsLoading] = useState(true);
+  const [candidatesLoading, setCandidatesLoading] = useState(true);
+  const [applicationsLoading, setApplicationsLoading] = useState(true);
+  const [auditLoading, setAuditLoading] = useState(true);
+  const [recruitmentError, setRecruitmentError] = useState<string | null>(null);
+  const [auditError, setAuditError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadDashboard = () => {
+      setRecruitmentError(null);
+      setAuditError(null);
+
+      if (showRecruitment) {
+        setJobsLoading(true);
+        setCandidatesLoading(true);
+        setApplicationsLoading(true);
+
+        void getJobs()
+          .then((result) => {
+            if (!mounted) return;
+            setJobs(result);
+          })
+          .catch((error) => {
+            console.error("Jobs dashboard load error:", error);
+
+            if (!mounted) return;
+
+            setRecruitmentError(
+              error?.response?.data?.message ||
+                t("dashboard.recruitmentLoadError")
+            );
+          })
+          .finally(() => {
+            if (mounted) {
+              setJobsLoading(false);
+            }
+          });
+
+        void getCandidates()
+          .then((result) => {
+            if (!mounted) return;
+            setCandidates(result);
+          })
+          .catch((error) => {
+            console.error("Candidates dashboard load error:", error);
+
+            if (!mounted) return;
+
+            setRecruitmentError(
+              error?.response?.data?.message ||
+                t("dashboard.recruitmentLoadError")
+            );
+          })
+          .finally(() => {
+            if (mounted) {
+              setCandidatesLoading(false);
+            }
+          });
+
+        void getApplications()
+          .then((result) => {
+            if (!mounted) return;
+            setApplications(result);
+          })
+          .catch((error) => {
+            console.error("Applications dashboard load error:", error);
+
+            if (!mounted) return;
+
+            setRecruitmentError(
+              error?.response?.data?.message ||
+                t("dashboard.recruitmentLoadError")
+            );
+          })
+          .finally(() => {
+            if (mounted) {
+              setApplicationsLoading(false);
+            }
+          });
+      } else {
+        setJobsLoading(false);
+        setCandidatesLoading(false);
+        setApplicationsLoading(false);
+      }
+
+      if (showAudit) {
+        setAuditLoading(true);
+
+        void getAuditAnalytics()
+          .then((result) => {
+            if (!mounted) return;
+            setAnalytics(result);
+          })
+          .catch((error) => {
+            console.error("Audit dashboard load error:", error);
+
+            if (!mounted) return;
+
+            setAuditError(
+              error?.response?.data?.message ||
+                t("dashboard.auditLoadError")
+            );
+          })
+          .finally(() => {
+            if (mounted) {
+              setAuditLoading(false);
+            }
+          });
+      } else {
+        setAuditLoading(false);
+      }
+    };
+
+    void loadDashboard();
+
+    return () => {
+      mounted = false;
+    };
+  }, [showRecruitment, showAudit, t]);
+
+  const candidateStatusStats = useMemo(() => {
+    const counts: Record<string, number> = {};
+    let shortlistedCount = 0;
+
+    candidates.forEach((candidate) => {
+      counts[candidate.status] = (counts[candidate.status] ?? 0) + 1;
+
+      if (candidate.status === "shortlisted") {
+        shortlistedCount += 1;
+      }
+    });
+
+    return {
+      breakdown: Object.entries(counts).map(([status, value]) => ({
+        status,
+        value,
+      })),
+      shortlistedCount,
+    };
+  }, [candidates]);
+
+  const statusBreakdown = candidateStatusStats.breakdown;
+
+  const recentCandidates = useMemo(() => {
+    const recent = candidates.slice(0, 5);
+
+    for (let index = 5; index < candidates.length; index += 1) {
+      const candidate = candidates[index];
+      const candidateTime = new Date(candidate.createdAt || 0).getTime();
+
+      let oldestIndex = 0;
+      let oldestTime = new Date(
+        recent[0]?.createdAt || 0,
+      ).getTime();
+
+      for (let recentIndex = 1; recentIndex < recent.length; recentIndex += 1) {
+        const recentTime = new Date(
+          recent[recentIndex]?.createdAt || 0,
+        ).getTime();
+
+        if (recentTime < oldestTime) {
+          oldestTime = recentTime;
+          oldestIndex = recentIndex;
+        }
+      }
+
+      if (candidateTime > oldestTime) {
+        recent[oldestIndex] = candidate;
+      }
+    }
+
+    return recent.sort(
+      (a, b) =>
+        new Date(b.createdAt || 0).getTime() -
+        new Date(a.createdAt || 0).getTime(),
+    );
+  }, [candidates]);
+
+  if (!user) return null;
+
+  return (
+    <div>
+      <PageHeader title={t("dashboard.welcome", { name: user.name.split(" ")[0] })} subtitle={t("dashboard.subtitle")} />
+
+          {showRecruitment && (
+            <>
+              <h3 className="dashboard-section-title">{t("dashboard.recruitment")}</h3>
+
+              {recruitmentError && (
+                <div className="dashboard-error">
+                  <AlertTriangle size={18} />
+                  <div>
+                    <strong>{t("dashboard.recruitmentLoadErrorTitle")}</strong>
+                    <p>{recruitmentError}</p>
+                  </div>
+                </div>
+              )}
+              <div className="kpi-grid">
+                <div className="kpi-card anim-in">
+                  <div className="kpi-card__icon" style={{ background: KPI_ICON_STYLES.accent.background }}>
+                    <Briefcase size={18} color={ACCENT} />
+                  </div>
+                  <p className="kpi-card__label">{t("dashboard.totalJobs")}</p>
+                  <p className="kpi-card__value">
+                    {jobsLoading ? "—" : jobs.length}
+                  </p>
+                </div>
+                <div className="kpi-card anim-in" style={{ animationDelay: "0.05s" }}>
+                  <div className="kpi-card__icon" style={{ background: KPI_ICON_STYLES.info.background }}>
+                    <UserSquare2 size={18} color={KPI_ICON_STYLES.info.color} />
+                  </div>
+                  <p className="kpi-card__label">{t("dashboard.totalCandidates")}</p>
+                  <p className="kpi-card__value">
+                    {candidatesLoading ? "—" : candidates.length}
+                  </p>
+                </div>
+                <div className="kpi-card anim-in" style={{ animationDelay: "0.1s" }}>
+                  <div className="kpi-card__icon" style={{ background: KPI_ICON_STYLES.success.background }}>
+                    <ClipboardList size={18} color={KPI_ICON_STYLES.success.color} />
+                  </div>
+                  <p className="kpi-card__label">{t("dashboard.applications")}</p>
+                  <p className="kpi-card__value">
+                    {applicationsLoading ? "—" : applications.length}
+                  </p>
+                </div>
+                <div className="kpi-card anim-in" style={{ animationDelay: "0.15s" }}>
+                  <div className="kpi-card__icon" style={{ background: KPI_ICON_STYLES.warning.background }}>
+                    <Star size={18} color={KPI_ICON_STYLES.warning.color} />
+                  </div>
+                  <p className="kpi-card__label">{t("dashboard.shortlisted")}</p>
+                  <p className="kpi-card__value">
+                    {candidatesLoading
+                      ? "—"
+                      : candidateStatusStats.shortlistedCount}
+                  </p>
+                </div>
+              </div>
+
+              <div className="charts-grid">
+                <div className="recent-card anim-in">
+                  <div className="chart-card__header">
+                    <h3>{t("dashboard.recentCandidates")}</h3>
+                    <button className="recent-card__link" onClick={() => navigate("/app/recruitment/candidates")}>
+                      {t("dashboard.viewAll")} <ArrowUpRight size={13} />
+                    </button>
+                  </div>
+                  {candidatesLoading ? (
+                    <div className="empty-state">{t("dashboard.loading")}</div>
+                  ) : recentCandidates.length === 0 ? (
+                    <div className="chart-empty">
+                      <PackageOpen size={22} />
+                      <p>{t("dashboard.noCandidates")}</p>
+                    </div>
+                  ) : (
+                    <div className="recent-list">
+                      {recentCandidates.map((c) => (
+                        <div
+                          className="recent-row"
+                          key={c.id}
+                          style={{ cursor: "pointer" }}
+                          onClick={() => navigate(`/app/recruitment/candidates/${c.id}`)}
+                        >
+                          <div className="recent-row__info">
+                            <p className="recent-row__title">{c.name}</p>
+                            <p className="recent-row__desc">{c.skills.slice(0, 3).join(", ") || "—"}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="chart-card anim-in" style={{ animationDelay: "0.06s" }}>
+                  <div className="chart-card__header">
+                    <h3>{t("dashboard.candidatesByStatus")}</h3>
+                  </div>
+                  {candidatesLoading ? (
+                    <div className="empty-state">{t("dashboard.loading")}</div>
+                  ) : statusBreakdown.length === 0 ? (
+                    <div className="chart-empty">
+                      <UserSquare2 size={22} />
+                      <p>{t("dashboard.addCandidates")}</p>
+                    </div>
+                  ) : (
+                    <div className="donut-wrap">
+                      <ResponsiveContainer width="100%" height={180}>
+                        <PieChart>
+                          <Pie
+                            data={statusBreakdown}
+                            dataKey="value"
+                            innerRadius={55}
+                            outerRadius={75}
+                            paddingAngle={2}
+                            animationDuration={900}
+                          >
+                            {statusBreakdown.map((entry) => (
+                              <Cell
+                                key={entry.status}
+                                fill={STATUS_COLORS[entry.status as CandidateStatus]}
+                                stroke="none"
+                              />
+                            ))}
+                          </Pie>
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div className="donut-center">
+                        <span className="donut-center__value">{candidates.length}</span>
+                        <span className="donut-center__label">{candidates.length === 1 ? t("dashboard.candidate") : t("dashboard.candidates")}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+
+          {showAudit && (
+            <>
+              <h3 className="dashboard-section-title">{t("dashboard.auditOperations")}</h3>
+
+              {auditLoading ? (
+                <div className="empty-state">{t("dashboard.loading")}</div>
+              ) : (
+                <>
+              {auditError && (
+                <div className="dashboard-error">
+                  <AlertTriangle size={18} />
+                  <div>
+                    <strong>{t("dashboard.auditLoadErrorTitle")}</strong>
+                    <p>{auditError}</p>
+                  </div>
+                </div>
+              )}
+
+              {analytics && (
+
+                <>
+
+                  <div className="kpi-grid">
+
+                    <div className="kpi-card anim-in">
+
+                      <div className="kpi-card__icon" style={{ background: KPI_ICON_STYLES.accent.background }}>
+
+                        <Gauge size={18} color={ACCENT} />
+
+                      </div>
+
+                      <p className="kpi-card__label">{t("dashboard.overallScore")}</p>
+
+                      <p className="kpi-card__value">{analytics.overallScore.toFixed(1)} / 10</p>
+
+                    </div>
+
+
+                    <div className="kpi-card anim-in" style={{ animationDelay: "0.05s" }}>
+
+                      <div className="kpi-card__icon" style={{ background: KPI_ICON_STYLES.info.background }}>
+
+                        <ClipboardCheck size={18} color={KPI_ICON_STYLES.info.color} />
+
+                      </div>
+
+                      <p className="kpi-card__label">{t("dashboard.totalAudits")}</p>
+
+                      <p className="kpi-card__value">{analytics.totalAudits}</p>
+
+                    </div>
+
+
+                    <div className="kpi-card anim-in" style={{ animationDelay: "0.1s" }}>
+
+                      <div className="kpi-card__icon" style={{ background: KPI_ICON_STYLES.success.background }}>
+
+                        <Store size={18} color={KPI_ICON_STYLES.success.color} />
+
+                      </div>
+
+                      <p className="kpi-card__label">{t("dashboard.restaurantsAudited")}</p>
+
+                      <p className="kpi-card__value">{analytics.restaurantsAudited}</p>
+
+                    </div>
+
+
+                    <div className="kpi-card anim-in" style={{ animationDelay: "0.15s" }}>
+
+                      <div className="kpi-card__icon" style={{ background: KPI_ICON_STYLES.warning.background }}>
+
+                        <AlertTriangle size={18} color={KPI_ICON_STYLES.warning.color} />
+
+                      </div>
+
+                      <p className="kpi-card__label">{t("dashboard.criticalLowScores")}</p>
+
+                      <p className="kpi-card__value">{analytics.criticalCount}</p>
+
+                    </div>
+
+                  </div>
+
+
+                  <div className="recent-card anim-in">
+
+                    <div className="chart-card__header">
+
+                      <h3>{t("dashboard.restaurantComparison")}</h3>
+
+                      <button
+
+                        className="recent-card__link"
+
+                        onClick={() => navigate("/app/audit/analytics")}
+
+                      >
+
+                        {t("dashboard.fullAnalytics")} <ArrowUpRight size={13} />
+
+                      </button>
+
+                    </div>
+
+
+                    {analytics.restaurantComparison.length === 0 ? (
+
+                      <EmptyState
+
+                        icon={<Store size={26} />}
+
+                        title={t("dashboard.noAudits")}
+
+                        hint={t("dashboard.submitAudit")}
+
+                      />
+
+                    ) : (
+
+                      <div className="recent-list">
+
+                        {analytics.restaurantComparison.map((r) => (
+
+                          <div className="recent-row" key={r.restaurantId}>
+
+                            <div className="recent-row__info">
+
+                              <p className="recent-row__title">{r.name}</p>
+
+                            </div>
+
+                            <span className="recent-row__time">
+
+                              {r.score.toFixed(1)} / 10
+
+                            </span>
+
+                          </div>
+
+                        ))}
+
+                      </div>
+
+                    )}
+
+                  </div>
+
+                </>
+
+              )}
+                </>
+              )}
+            </>
+          )}
+    </div>
+  );
+};
+
+export default Dashboard;

@@ -1,20 +1,49 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "server.js",
+  "private": true,
+  "engines": {
+    "node": ">=24 <25",
+    "npm": ">=11"
+  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test test/*.test.js",
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "check": "node scripts/checkSyntax.js",
+    "db:indexes": "node scripts/initIndexes.js",
+    "bootstrap:admin": "node scripts/bootstrapAdmin.js",
+    "seed:roles": "node scripts/seedRoles.js",
+    "seed:users": "node scripts/seedUsers.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
+    "js-yaml": "^5.4.2",
+    "jsonwebtoken": "^9.0.3",
+    "mammoth": "^1.13.0",
     "mongoose": "^9.9.1",
-    "multer": "^2.2.0",
-    "nodemon": "^3.1.14"
+    "multer": "^2.4.0",
+    "nodemailer": "^10.0.9",
+    "pdf-parse": "^2.4.5",
+    "pdfkit": "^0.20.2",
+    "qs": "^6.16.0",
+    "swagger-jsdoc": "^6.3.0",
+    "swagger-ui-express": "^5.0.1",
+    "write-excel-file": "^4.1.1"
+  },
+  "overrides": {
+    "mammoth": {
+      "argparse": "2.0.1"
+    }
   }
 }

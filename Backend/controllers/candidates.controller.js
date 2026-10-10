@@ -1,0 +1,500 @@
+const mongoose = require("mongoose");
+const { recordActivity } = require("../services/activityLog.service");
+const Candidate = require("../models/candidate.model");
+const { listRecords, searchFilter } = require("../utils/listQuery");
+const { sendError } = require("../utils/sendError");
+
+const candidateStatusValues =
+  Candidate.schema.path("status").enumValues;
+
+function getScopeFilter(req) {
+  return req.dataScope || {};
+}
+
+function buildScopedQuery(req, extra = {}) {
+  return {
+    deletedAt: null,
+    ...extra,
+    ...getScopeFilter(req),
+  };
+}
+
+function isValidObjectId(id) {
+  return mongoose.Types.ObjectId.isValid(id);
+}
+
+function normalizeString(value) {
+  if (value === undefined || value === null) {
+    return "";
+  }
+
+  return String(value).trim();
+}
+
+function normalizeArray(value) {
+  if (value === undefined || value === null || value === "") {
+    return [];
+  }
+
+  const values = Array.isArray(value)
+    ? value
+    : [value];
+
+  return values
+    .map((item) => String(item).trim())
+    .filter(Boolean);
+}
+
+function normalizeStatus(value) {
+  const status = normalizeString(value).toLowerCase();
+
+  if (!status) {
+    return "applied";
+  }
+
+  return candidateStatusValues.includes(status)
+    ? status
+    : null;
+}
+
+function parseExperience(value) {
+  if (value === undefined || value === null || value === "") {
+    return 0;
+  }
+
+  const experience = Number(value);
+
+  if (!Number.isFinite(experience) || experience < 0) {
+    return null;
+  }
+
+  return experience;
+}
+
+exports.getCandidates = async (req, res) => {
+  try {
+    const candidates = await listRecords(Candidate,
+      buildScopedQuery(req, searchFilter(req.query, ["name", "role", "email"])), req, res);
+
+    return res.status(200).json(candidates);
+  } catch (error) {
+    return sendError(res, error, "Namizədlər alınarkən server xətası baş verdi.");
+  }
+};
+
+exports.getCandidateById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({
+        message: "Namizəd ID-si düzgün deyil.",
+      });
+    }
+
+    const candidate = await Candidate.findOne(
+      buildScopedQuery(req, {
+        _id: id,
+      })
+    ).lean();
+
+    if (!candidate) {
+      return res.status(404).json({
+        message: "Namizəd tapılmadı.",
+      });
+    }
+
+    return res.status(200).json(candidate);
+  } catch (error) {
+    console.error("Get candidate error:", error?.name || "Error");
+
+    return res.status(500).json({
+      message: "Namizəd alınarkən server xətası baş verdi.",
+    });
+  }
+};
+
+exports.createCandidate = async (req, res) => {
+  try {
+    const name = normalizeString(req.body.name);
+    const role = normalizeString(req.body.role);
+
+    if (!name) {
+      return res.status(400).json({
+        message: "Namizədin adı tələb olunur.",
+      });
+    }
+
+    if (!role) {
+      return res.status(400).json({
+        message: "Namizədin vəzifəsi tələb olunur.",
+      });
+    }
+
+    const status = normalizeStatus(req.body.status);
+
+    if (!status) {
+      return res.status(400).json({
+        message: "Namizəd statusu düzgün deyil.",
+      });
+    }
+
+    const experience = parseExperience(
+      req.body.experience
+    );
+
+    if (experience === null) {
+      return res.status(400).json({
+        message: "Təcrübə ili düzgün rəqəm olmalıdır.",
+      });
+    }
+
+    const cvUrl = req.file
+      ? `/uploads/${req.file.filename}`
+      : "";
+
+    /*
+     * Security rule:
+     *
+     * departmentId / createdBy / assignedTo
+     * client request-dən qəbul edilmir.
+     */
+    const candidate = new Candidate({
+      name,
+      role,
+      status,
+
+      email: normalizeString(req.body.email),
+      phone: normalizeString(req.body.phone),
+      education: normalizeString(req.body.education),
+
+      skills: normalizeArray(req.body.skills),
+      experience,
+
+      languages: normalizeArray(req.body.languages),
+      certificates: normalizeArray(
+        req.body.certificates
+      ),
+
+      cvUrl,
+
+      departmentId: req.user.departmentId || "",
+      createdBy: req.user.id,
+      assignedTo: req.user.id,
+    });
+
+    const saved = await candidate.save();
+
+    try {
+      await recordActivity({
+        req,
+        action: "create",
+        entityType: "candidate",
+        entityId: saved._id,
+        description: `Namizəd yaradıldı: ${saved.name} (${saved.role})`,
+      });
+    } catch (activityError) {
+      console.error(
+        "Candidate create activity log error:",
+        activityError?.name || "Error");
+    }
+
+    return res.status(201).json(saved);
+  } catch (error) {
+    console.error("Create candidate error:", error?.name || "Error");
+
+    if (error?.name === "ValidationError") {
+      return res.status(400).json({
+        message: "Namizəd məlumatları düzgün deyil.",
+      });
+    }
+
+    return res.status(500).json({
+      message: "Namizəd yaradılarkən server xətası baş verdi.",
+    });
+  }
+};
+
+exports.updateCandidate = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({
+        message: "Namizəd ID-si düzgün deyil.",
+      });
+    }
+
+    const update = {};
+
+    if (req.body.name !== undefined) {
+      const name = normalizeString(req.body.name);
+
+      if (!name) {
+        return res.status(400).json({
+          message: "Namizədin adı boş ola bilməz.",
+        });
+      }
+
+      update.name = name;
+    }
+
+    if (req.body.role !== undefined) {
+      const role = normalizeString(req.body.role);
+
+      if (!role) {
+        return res.status(400).json({
+          message: "Namizədin vəzifəsi boş ola bilməz.",
+        });
+      }
+
+      update.role = role;
+    }
+
+    if (req.body.status !== undefined) {
+      const status = normalizeStatus(req.body.status);
+
+      if (!status) {
+        return res.status(400).json({
+          message: "Namizəd statusu düzgün deyil.",
+        });
+      }
+
+      update.status = status;
+    }
+
+    if (req.body.email !== undefined) {
+      update.email = normalizeString(req.body.email);
+    }
+
+    if (req.body.phone !== undefined) {
+      update.phone = normalizeString(req.body.phone);
+    }
+
+    if (req.body.education !== undefined) {
+      update.education =
+        normalizeString(req.body.education);
+    }
+
+    if (req.body.skills !== undefined) {
+      update.skills = normalizeArray(
+        req.body.skills
+      );
+    }
+
+    if (req.body.experience !== undefined) {
+      const experience = parseExperience(
+        req.body.experience
+      );
+
+      if (experience === null) {
+        return res.status(400).json({
+          message:
+            "Təcrübə ili düzgün rəqəm olmalıdır.",
+        });
+      }
+
+      update.experience = experience;
+    }
+
+    if (req.body.languages !== undefined) {
+      update.languages = normalizeArray(
+        req.body.languages
+      );
+    }
+
+    if (req.body.certificates !== undefined) {
+      update.certificates = normalizeArray(
+        req.body.certificates
+      );
+    }
+
+    /*
+     * Authorization fields are intentionally ignored.
+     *
+     * Client cannot modify:
+     * departmentId
+     * createdBy
+     * assignedTo
+     */
+    const updated = await Candidate.findOneAndUpdate(
+      buildScopedQuery(req, {
+        _id: id,
+      }),
+      update,
+      {
+        returnDocument: "after",
+        runValidators: true,
+      }
+    );
+
+    if (!updated) {
+      return res.status(404).json({
+        message:
+          "Namizəd tapılmadı və ya bu namizədi dəyişmək üçün icazəniz yoxdur.",
+      });
+    }
+
+    try {
+      await recordActivity({
+        req,
+        action: "update",
+        entityType: "candidate",
+        entityId: updated._id,
+        description: `Namizəd yeniləndi: ${updated.name} (${updated.role})`,
+      });
+    } catch (activityError) {
+      console.error(
+        "Candidate update activity log error:",
+        activityError?.name || "Error");
+    }
+
+    return res.status(200).json(updated);
+  } catch (error) {
+    console.error("Update candidate error:", error?.name || "Error");
+
+    if (error?.name === "ValidationError") {
+      return res.status(400).json({
+        message: "Namizəd məlumatları düzgün deyil.",
+      });
+    }
+
+    return res.status(500).json({
+      message: "Namizəd yenilənərkən server xətası baş verdi.",
+    });
+  }
+};
+
+
+exports.updateCandidateStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({
+        message: "Namizəd ID-si düzgün deyil.",
+      });
+    }
+
+    const status = normalizeStatus(req.body.status);
+
+    if (!status) {
+      return res.status(400).json({
+        message: "Namizəd statusu düzgün deyil.",
+      });
+    }
+
+    const existing = await Candidate.findOne(
+      buildScopedQuery(req, {
+        _id: id,
+      })
+    );
+
+    if (!existing) {
+      return res.status(404).json({
+        message:
+          "Namizəd tapılmadı və ya bu namizədi dəyişmək üçün icazəniz yoxdur.",
+      });
+    }
+
+    const updated = await Candidate.findOneAndUpdate(
+      buildScopedQuery(req, {
+        _id: id,
+      }),
+      { status },
+      {
+        returnDocument: "after",
+        runValidators: true,
+      }
+    );
+
+    if (!updated) {
+      return res.status(404).json({
+        message:
+          "Namizəd tapılmadı və ya bu namizədi dəyişmək üçün icazəniz yoxdur.",
+      });
+    }
+
+    if (existing.status !== updated.status) {
+      try {
+        await recordActivity({
+          req,
+          action: "status_change",
+          entityType: "candidate",
+          entityId: updated._id,
+          description: `Namizəd statusu dəyişdirildi: ${updated.name} (${existing.status} → ${updated.status})`,
+        });
+      } catch (activityError) {
+        console.error(
+          "Candidate status activity log error:",
+          activityError?.name || "Error");
+      }
+    }
+
+    return res.status(200).json(updated);
+  } catch (error) {
+    console.error("Update candidate status error:", error?.name || "Error");
+
+    if (error?.name === "ValidationError") {
+      return res.status(400).json({
+        message: "Namizəd statusu düzgün deyil.",
+      });
+    }
+
+    return res.status(500).json({
+      message: "Namizəd statusu yenilənərkən server xətası baş verdi.",
+    });
+  }
+};
+
+exports.deleteCandidate = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({
+        message: "Namizəd ID-si düzgün deyil.",
+      });
+    }
+
+    const deleted = await Candidate.findOneAndUpdate(
+      buildScopedQuery(req, {
+        _id: id,
+      }),
+      { $set: { deletedAt: new Date() } },
+      { returnDocument: "after", runValidators: true }
+    );
+
+    if (!deleted) {
+      return res.status(404).json({
+        message:
+          "Namizəd tapılmadı və ya bu namizədi silmək üçün icazəniz yoxdur.",
+      });
+    }
+
+    try {
+      await recordActivity({
+        req,
+        action: "delete",
+        entityType: "candidate",
+        entityId: deleted._id,
+        description: `Namizəd silindi: ${deleted.name} (${deleted.role})`,
+      });
+    } catch (activityError) {
+      console.error(
+        "Candidate delete activity log error:",
+        activityError?.name || "Error");
+    }
+
+    return res.status(200).json({
+      message: "Namizəd silindi.",
+    });
+  } catch (error) {
+    console.error("Delete candidate error:", error?.name || "Error");
+
+    return res.status(500).json({
+      message:
+        "Namizəd silinərkən server xətası baş verdi.",
+    });
+  }
+};
